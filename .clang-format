@@ -1,0 +1,10 @@
+Language: Cpp
+BasedOnStyle: LLVM
+DerivePointerAlignment: false
+IndentWidth: 4
+TabWidth: 4
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveMacros : Consecutive
+Cpp11BracedListStyle: true
+ColumnLimit: 150
+SortIncludes: true
