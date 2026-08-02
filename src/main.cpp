@@ -1,6 +1,10 @@
 #include "../raylib/src/raylib.h"
 #include <vector>
 
+static int currentWidth        = 800;
+static int currentHeight       = 600;
+static constexpr int CELL_SIZE = 1;
+
 enum ParticleType { AIR = 0, SAND, WATER, STONE };
 
 struct Particle {
@@ -10,16 +14,15 @@ struct Particle {
 };
 
 class SandEngine {
-    int width;
-    int height;
+    int width  = 0;
+    int height = 0;
+    Texture2D screenTexture{};
     int cellSize;
-    std::vector<Particle> grid;
+    std::vector<Particle> grid{};
+    std::vector<Color> pixelBuffer{};
 
-    std::vector<Color> pixelBuffer;
-    Texture2D screenTexture;
-
-    int getIndex(int x, int y) const { return y * width + x; }
-    bool isValid(int x, int y) const { return (x >= 0 && x < width && y >= 0 && y < height); }
+    [[nodiscard]] int getIndex(int x, int y) const { return y * width + x; }
+    [[nodiscard]] bool isValid(int x, int y) const { return (x >= 0 && x < width && y >= 0 && y < height); }
 
     void swapParticles(int idxA, int idxB) {
         Particle temp         = grid[idxA];
@@ -35,17 +38,20 @@ class SandEngine {
         if (belowY >= height)
             return;
 
-        int belowIdx       = getIndex(x, belowY);
-        int bottomLeftIdx  = getIndex(x - 1, belowY);
-        int bottomRightIdx = getIndex(x + 1, belowY);
-
+        int belowIdx = getIndex(x, belowY);
         if (grid[belowIdx].type == AIR || grid[belowIdx].type == WATER) {
             swapParticles(currentIdx, belowIdx);
             return;
         }
 
-        bool canLeft  = (x > 0) && (grid[bottomLeftIdx].type == AIR || grid[bottomLeftIdx].type == WATER);
-        bool canRight = (x < width - 1) && (grid[bottomRightIdx].type == AIR || grid[bottomRightIdx].type == WATER);
+        bool canLeft  = (x > 0);
+        bool canRight = (x < width - 1);
+
+        int bottomLeftIdx  = canLeft ? getIndex(x - 1, belowY) : -1;
+        int bottomRightIdx = canRight ? getIndex(x + 1, belowY) : -1;
+
+        canLeft  = canLeft && (grid[bottomLeftIdx].type == AIR || grid[bottomLeftIdx].type == WATER);
+        canRight = canRight && (grid[bottomRightIdx].type == AIR || grid[bottomRightIdx].type == WATER);
 
         if (canLeft && canRight) {
             int targetIdx = (GetRandomValue(0, 1) == 0) ? bottomLeftIdx : bottomRightIdx;
@@ -63,26 +69,32 @@ class SandEngine {
         if (belowY >= height)
             return;
 
-        int belowIdx       = getIndex(x, belowY);
-        int bottomLeftIdx  = getIndex(x - 1, belowY);
-        int bottomRightIdx = getIndex(x + 1, belowY);
+        int belowIdx = getIndex(x, belowY);
 
         if (grid[belowIdx].type == AIR) {
             swapParticles(currentIdx, belowIdx);
             return;
         }
 
-        bool canLeft  = (x > 0) && (grid[bottomLeftIdx].type == AIR);
-        bool canRight = (x < width - 1) && (grid[bottomRightIdx].type == AIR);
+        bool canLeft  = (x > 0);
+        bool canRight = (x < width - 1);
+
+        int bottomLeftIdx  = canLeft ? getIndex(x - 1, belowY) : -1;
+        int bottomRightIdx = canRight ? getIndex(x + 1, belowY) : -1;
+
+        canLeft  = canLeft && (grid[bottomLeftIdx].type == AIR);
+        canRight = canRight && (grid[bottomRightIdx].type == AIR);
 
         if (canLeft && canRight) {
             int targetIdx = (GetRandomValue(0, 1) == 0) ? bottomLeftIdx : bottomRightIdx;
             swapParticles(currentIdx, targetIdx);
             return;
-        } else if (canLeft) {
+        }
+        if (canLeft) {
             swapParticles(currentIdx, bottomLeftIdx);
             return;
-        } else if (canRight) {
+        }
+        if (canRight) {
             swapParticles(currentIdx, bottomRightIdx);
             return;
         }
@@ -101,23 +113,54 @@ class SandEngine {
     }
 
   public:
-    SandEngine(int screenWidth, int screenHeight, int cellSize) : cellSize(cellSize) {
-        width  = screenWidth / cellSize;
-        height = screenHeight / cellSize;
-        grid.resize(width * height, Particle{AIR, BLACK, false});
+    SandEngine(int screenWidth, int screenHeight, int cellSize) : cellSize(cellSize) { ResizeEngine(screenWidth, screenHeight); }
 
-        pixelBuffer.resize(screenWidth * screenHeight, BLACK);
+    ~SandEngine() {
+        if (screenTexture.id > 0)
+            UnloadTexture(screenTexture);
+    }
 
-        Image blankImage = GenImageColor(screenWidth, screenHeight, BLACK);
+    void ResizeEngine(int newScreenWidth, int newScreenHeight) {
+        if (newScreenWidth <= 0 || newScreenHeight <= 0)
+            return;
+
+        int oldWidth                  = width;
+        int oldHeight                 = height;
+        std::vector<Particle> oldGrid = grid;
+
+        if (screenTexture.id > 0) {
+            UnloadTexture(screenTexture);
+        }
+
+        width  = newScreenWidth / cellSize;
+        height = newScreenHeight / cellSize;
+
+        grid.assign(width * height, Particle{AIR, BLACK, false});
+        pixelBuffer.assign(static_cast<std::vector<Color, std::allocator<Color>>::size_type>(newScreenWidth) * newScreenHeight, BLACK);
+
+        if (!oldGrid.empty()) {
+            int yOffset = height - oldHeight;
+
+            for (int y = 0; y < oldHeight; y++) {
+                for (int x = 0; x < oldWidth; x++) {
+                    int targetY = y + yOffset;
+                    if (x < width && targetY >= 0 && targetY < height) {
+                        int oldIdx   = y * oldWidth + x;
+                        int newIdx   = targetY * width + x;
+                        grid[newIdx] = oldGrid[oldIdx];
+                    }
+                }
+            }
+        }
+
+        Image blankImage = GenImageColor(newScreenWidth, newScreenHeight, BLACK);
         screenTexture    = LoadTextureFromImage(blankImage);
         UnloadImage(blankImage);
     }
 
-    ~SandEngine() { UnloadTexture(screenTexture); }
-
     void UpdatePhysics() {
-        for (auto &particle : grid) {
-            particle.hasUpdated = false;
+        for (auto &i : grid) {
+            i.hasUpdated = false;
         }
 
         bool leftToRight = (GetRandomValue(0, 1) == 0);
@@ -126,7 +169,7 @@ class SandEngine {
             if (leftToRight) {
                 for (int x = 0; x < width; x++) {
                     int idx = getIndex(x, y);
-                    if (grid[idx].hasUpdated)
+                    if (grid[idx].hasUpdated || grid[idx].type == AIR || grid[idx].type == STONE)
                         continue;
 
                     if (grid[idx].type == SAND)
@@ -137,7 +180,7 @@ class SandEngine {
             } else {
                 for (int x = width - 1; x >= 0; x--) {
                     int idx = getIndex(x, y);
-                    if (grid[idx].hasUpdated)
+                    if (grid[idx].hasUpdated || grid[idx].type == AIR || grid[idx].type == STONE)
                         continue;
 
                     if (grid[idx].type == SAND)
@@ -150,18 +193,19 @@ class SandEngine {
     }
 
     void Render() {
-        int screenWidth = width * cellSize;
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                Color pColor = grid[getIndex(x, y)].color;
-
-                // Expand cell block sizes directly into full-resolution texture slices
-                for (int cy = 0; cy < cellSize; cy++) {
-                    for (int cx = 0; cx < cellSize; cx++) {
-                        int pixelX                                 = x * cellSize + cx;
-                        int pixelY                                 = y * cellSize + cy;
-                        pixelBuffer[pixelY * screenWidth + pixelX] = pColor;
+        if (cellSize == 1) {
+            for (size_t i = 0; i < grid.size(); ++i) {
+                pixelBuffer[i] = grid[i].color;
+            }
+        } else {
+            int screenWidth = width * cellSize;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    Color pColor = grid[getIndex(x, y)].color;
+                    for (int cy = 0; cy < cellSize; cy++) {
+                        for (int cx = 0; cx < cellSize; cx++) {
+                            pixelBuffer[(y * cellSize + cy) * screenWidth + (x * cellSize + cx)] = pColor;
+                        }
                     }
                 }
             }
@@ -212,14 +256,11 @@ class SandEngine {
 };
 
 int main() {
-    int SCREEN_WIDTH        = 800;
-    int SCREEN_HEIGHT       = 600;
-    constexpr int CELL_SIZE = 1;
-
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "HIGH-PERFORMANCE SAND SIMULATOR");
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(currentWidth, currentHeight, "HIGH-PERFORMANCE SAND SIMULATOR");
     SetTargetFPS(60);
 
-    SandEngine simulation(SCREEN_WIDTH, SCREEN_HEIGHT, CELL_SIZE);
+    SandEngine simulation(currentWidth, currentHeight, CELL_SIZE);
     ParticleType activeBrush = SAND;
 
     while (!WindowShouldClose()) {
@@ -234,33 +275,24 @@ int main() {
         if (IsKeyPressed(KEY_F11)) {
             ToggleFullscreen();
         }
-        if (IsWindowFullscreen()) {
-            int monitor   = GetCurrentMonitor();
-            SCREEN_HEIGHT = GetMonitorHeight(monitor);
-            SCREEN_WIDTH  = GetMonitorWidth(monitor);
-        } else {
-            SCREEN_HEIGHT = GetRenderHeight();
-            SCREEN_WIDTH  = GetRenderWidth();
+        if (IsWindowResized()) {
+            currentWidth  = GetRenderWidth();
+            currentHeight = GetRenderHeight();
+            simulation.ResizeEngine(currentWidth, currentHeight);
         }
-
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             Vector2 mPos = GetMousePosition();
-            simulation.SpawnElement(static_cast<int>(mPos.x), static_cast<int>(mPos.y), activeBrush, 8);
+            simulation.SpawnElement(static_cast<int>(mPos.x), static_cast<int>(mPos.y), activeBrush, 15);
         }
 
         simulation.UpdatePhysics();
-
         BeginDrawing();
         ClearBackground(BLACK);
-
         simulation.Render();
-
         DrawFPS(10, 10);
-        DrawText("[1] Sand [2] Water [3] Stone [4] Eraser", 10, 35, 16, RAYWHITE);
-
+        DrawText(" (1)Sand (2)Water (3)Stone (4)Eraser (F11)Fullscreen", 10, 35, 16, RAYWHITE);
         EndDrawing();
     }
-
     CloseWindow();
     return 0;
 }
